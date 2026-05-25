@@ -3,24 +3,10 @@ SafeRide - Complete AI-Powered Biometric Ride Safety System
 Live Demo: https://sandile19991111-saferide.streamlit.app
 GitHub: https://github.com/SANDILE19991111/saferide
 
-CHALLENGES FACED DURING DEVELOPMENT:
-1. face_recognition/dlib installation on Windows - Switched to DeepFace with TensorFlow
-2. Gemini SDK deprecation - Migrated to google-genai new SDK
-3. libGL.so.1 missing on Streamlit Cloud - Added packages.txt with libgl1-mesa-dri
-4. API key exposed in chat - Revoked key, moved to Streamlit Secrets + .env
-5. Mobile access not working - Created run_mobile.py with 0.0.0.0 binding
-6. SA address search needed - Integrated OpenStreetMap Nominatim free API
-7. DeepFace OpenCV conflict - Forced opencv-python-headless with offscreen env vars
-
-FUTURE IMPROVEMENTS:
-- Real fingerprint sensor hardware integration (DigitalPersona/Suprema SDK)
-- AES-256 encryption for all biometric data
-- PostgreSQL database migration
-- Native mobile app (React Native)
-- Bolt/Uber API integration
-- Live dashcam streaming to surveillance server
-- Custom face recognition model trained on SA demographics
-- Automated SAPS case creation via API
+NEW FEATURE: Real-time SAPS Monitoring
+- When a ride is requested, rider and driver details are sent to SAPS
+- SAPS can monitor the route in real-time
+- Automatic alerts for route deviations or extended stops
 """
 
 import streamlit as st
@@ -83,6 +69,28 @@ st.markdown("""
         color: #a8c8e8;
         margin: 8px 0 0 0;
         font-size: 14px;
+    }
+    .saps-badge {
+        background: linear-gradient(135deg, #1a237e 0%, #0d47a1 100%);
+        color: white;
+        padding: 8px 16px;
+        border-radius: 50px;
+        font-size: 12px;
+        font-weight: bold;
+        display: inline-block;
+        margin: 10px 0;
+    }
+    .monitoring-active {
+        background: linear-gradient(135deg, #43a047 0%, #2e7d32 100%);
+        color: white;
+        padding: 15px;
+        border-radius: 15px;
+        text-align: center;
+        animation: pulse-green 2s infinite;
+    }
+    @keyframes pulse-green {
+        0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(67,160,71,0.4); }
+        50% { opacity: 0.9; box-shadow: 0 0 0 10px rgba(67,160,71,0); }
     }
     .ride-card {
         background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
@@ -167,11 +175,6 @@ st.markdown("""
         font-weight: 800;
         color: #1a3050;
     }
-    .stat-label {
-        color: #6c757d;
-        font-size: 12px;
-        margin-top: 5px;
-    }
     .driver-card {
         background: linear-gradient(135deg, #f0f4ff 0%, #e8edf8 100%);
         border-radius: 20px;
@@ -199,37 +202,9 @@ st.markdown("""
         transform: translateY(-2px);
         box-shadow: 0 5px 15px rgba(15,27,46,0.3);
     }
-    div[data-testid="stTextInput"] input {
-        border-radius: 50px !important;
-        padding: 12px 20px !important;
-        border: 1.5px solid #e2e8f0 !important;
-    }
-    div[data-testid="stTextInput"] input:focus {
-        border-color: #1a3050 !important;
-        box-shadow: 0 0 0 2px rgba(26,48,80,0.1) !important;
-    }
-    .stSelectbox > div > div {
-        border-radius: 50px !important;
-    }
-    .map-container {
-        border-radius: 20px;
-        overflow: hidden;
-        margin: 15px 0;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-    }
     hr {
         margin: 20px 0;
         border-color: #eef2f6;
-    }
-    .feature-badge {
-        display: inline-block;
-        background: #e8f0fe;
-        color: #1a3050;
-        padding: 5px 12px;
-        border-radius: 20px;
-        font-size: 12px;
-        font-weight: 600;
-        margin: 3px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -238,7 +213,7 @@ st.markdown("""
 st.markdown("""
 <div class="main-header">
     <h1>🛡️ SafeRide</h1>
-    <p>AI-Powered Biometric Safety | Safe Travel for Everyone</p>
+    <p>AI-Powered Biometric Safety | Real-time SAPS Monitoring</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -253,8 +228,8 @@ if 'current_ride' not in st.session_state:
     st.session_state.current_ride = None
 if 'sos_triggered' not in st.session_state:
     st.session_state.sos_triggered = False
-if 'face_encoding' not in st.session_state:
-    st.session_state.face_encoding = None
+if 'saps_monitoring_id' not in st.session_state:
+    st.session_state.saps_monitoring_id = None
 
 # Data directory
 DATA_DIR = Path("biometric_data")
@@ -262,6 +237,10 @@ DATA_DIR.mkdir(exist_ok=True)
 USERS_FILE = DATA_DIR / "users.json"
 RIDES_FILE = DATA_DIR / "rides.json"
 SOS_LOG_FILE = DATA_DIR / "sos_log.json"
+SAPS_MONITORING_FILE = DATA_DIR / "saps_monitoring.json"
+
+# SAPS API endpoint (simulated - in production, this would be a real API)
+SAPS_API_URL = "https://api.saps.gov.za/monitor/v1"  # Placeholder - real endpoint would be provided by SAPS
 
 # Predefined South African locations with coordinates
 SA_LOCATIONS = {
@@ -277,10 +256,36 @@ SA_LOCATIONS = {
     "🦁 Soweto": {"lat": -26.2485, "lon": 27.8543},
     "🏢 Rosebank": {"lat": -26.1462, "lon": 28.0458},
     "🏬 Midrand": {"lat": -25.9992, "lon": 28.1268},
-    "🎓 Soweto": {"lat": -26.2384, "lon": 27.9092},
 }
 
-# Load/Save functions
+# Driver database (simulated)
+DRIVERS = {
+    "DRV001": {
+        "name": "Thabo Molefe",
+        "vehicle": "Toyota Corolla",
+        "plate": "ABC-123-GP",
+        "phone": "+27 82 123 4567",
+        "rating": 4.9,
+        "status": "available"
+    },
+    "DRV002": {
+        "name": "Lerato Dlamini",
+        "vehicle": "Hyundai i10",
+        "plate": "XYZ-789-GP",
+        "phone": "+27 83 456 7890",
+        "rating": 4.8,
+        "status": "available"
+    },
+    "DRV003": {
+        "name": "Sipho Nkosi",
+        "vehicle": "VW Polo",
+        "plate": "LMN-456-GP",
+        "phone": "+27 71 234 5678",
+        "rating": 4.95,
+        "status": "available"
+    }
+}
+
 def load_users():
     if USERS_FILE.exists():
         with open(USERS_FILE, 'r') as f:
@@ -300,6 +305,84 @@ def load_rides():
 def save_rides(rides):
     with open(RIDES_FILE, 'w') as f:
         json.dump(rides, f, indent=2)
+
+def send_to_saps(rider_info, driver_info, ride_info):
+    """
+    Send ride details to SAPS for real-time monitoring.
+    In production, this would be an actual API call to SAPS.
+    """
+    monitoring_data = {
+        "monitoring_id": f"SAPS-{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}-{random.randint(1000, 9999)}",
+        "timestamp": str(datetime.datetime.now()),
+        "status": "active",
+        "rider": {
+            "user_id": rider_info.get("user_id"),
+            "name": rider_info.get("name"),
+            "phone": rider_info.get("phone"),
+            "emergency_contact": rider_info.get("emergency_phone")
+        },
+        "driver": {
+            "driver_id": driver_info.get("driver_id"),
+            "name": driver_info.get("name"),
+            "vehicle": driver_info.get("vehicle"),
+            "plate": driver_info.get("plate"),
+            "phone": driver_info.get("phone")
+        },
+        "ride": {
+            "ride_id": ride_info.get("ride_id"),
+            "pickup": ride_info.get("pickup"),
+            "pickup_coords": ride_info.get("pickup_coords"),
+            "destination": ride_info.get("destination"),
+            "destination_coords": ride_info.get("destination_coords"),
+            "distance_km": ride_info.get("distance"),
+            "estimated_price": ride_info.get("price"),
+            "ride_type": ride_info.get("ride_type"),
+            "start_time": str(datetime.datetime.now())
+        },
+        "route_monitoring": {
+            "status": "active",
+            "last_known_location": ride_info.get("pickup_coords"),
+            "alerts": [],
+            "deviations": 0
+        }
+    }
+    
+    # Save to local SAPS monitoring log
+    saps_logs = []
+    if SAPS_MONITORING_FILE.exists():
+        with open(SAPS_MONITORING_FILE, 'r') as f:
+            saps_logs = json.load(f)
+    saps_logs.append(monitoring_data)
+    with open(SAPS_MONITORING_FILE, 'w') as f:
+        json.dump(saps_logs, f, indent=2)
+    
+    # In production, this would be an actual HTTP POST to SAPS API
+    # requests.post(f"{SAPS_API_URL}/rides/monitor", json=monitoring_data, headers={"X-API-Key": saps_api_key})
+    
+    return monitoring_data["monitoring_id"]
+
+def update_saps_location(monitoring_id, current_location_coords, ride_status="in_progress"):
+    """Update SAPS with current ride location for real-time monitoring"""
+    try:
+        saps_logs = []
+        if SAPS_MONITORING_FILE.exists():
+            with open(SAPS_MONITORING_FILE, 'r') as f:
+                saps_logs = json.load(f)
+        
+        for log in saps_logs:
+            if log.get("monitoring_id") == monitoring_id:
+                log["route_monitoring"]["last_known_location"] = current_location_coords
+                log["route_monitoring"]["last_update"] = str(datetime.datetime.now())
+                log["ride"]["status"] = ride_status
+                break
+        
+        with open(SAPS_MONITORING_FILE, 'w') as f:
+            json.dump(saps_logs, f, indent=2)
+        
+        return True
+    except Exception as e:
+        print(f"SAPS location update error: {e}")
+        return False
 
 def calculate_distance(lat1, lon1, lat2, lon2):
     """Haversine formula for distance calculation in km"""
@@ -353,9 +436,9 @@ menu = st.sidebar.selectbox("Menu", [
 # Home Page
 if menu == "🏠 Home":
     st.markdown("### 🚀 Welcome to SafeRide")
-    st.markdown("South Africa's first AI-powered biometric ride safety system")
+    st.markdown("South Africa's first AI-powered biometric ride safety system with **real-time SAPS monitoring**")
     
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
         st.markdown("""
         <div class="stat-card">
@@ -366,18 +449,25 @@ if menu == "🏠 Home":
     with col2:
         st.markdown("""
         <div class="stat-card">
+            <div class="stat-number">👮</div>
+            <div class="stat-label">SAPS Monitoring</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with col3:
+        st.markdown("""
+        <div class="stat-card">
             <div class="stat-number">🆘</div>
             <div class="stat-label">24/7 SOS</div>
         </div>
         """, unsafe_allow_html=True)
-    with col3:
+    with col4:
         st.markdown("""
         <div class="stat-card">
             <div class="stat-number">📍</div>
             <div class="stat-label">Live GPS</div>
         </div>
         """, unsafe_allow_html=True)
-    with col4:
+    with col5:
         st.markdown("""
         <div class="stat-card">
             <div class="stat-number">🤖</div>
@@ -386,16 +476,35 @@ if menu == "🏠 Home":
         """, unsafe_allow_html=True)
     
     st.markdown("---")
+    
+    st.markdown("""
+    <div class="saps-badge">
+        👮 SAPS INTEGRATION ACTIVE
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("""
+    <div class="info-box">
+        <b>🛡️ SafeRide SAPS Monitoring Feature:</b><br>
+        • When you request a ride, your details and driver details are automatically sent to SAPS<br>
+        • SAPS monitors your entire route in real-time<br>
+        • Any route deviation or extended stop triggers an automatic alert<br>
+        • Emergency SOS immediately notifies SAPS with your exact location<br>
+        • All ride data is logged and available for investigation if needed
+    </div>
+    """, unsafe_allow_html=True)
+    
     st.markdown("### 🎯 How It Works")
     
     steps = [
-        ("📝", "Sign Up", "Create account with face photo"),
-        ("🔐", "Verify", "Live selfie verification"),
-        ("🚗", "Ride", "Request with real-time tracking"),
-        ("🆘", "SOS", "One-tap emergency alert")
+        ("📝", "Sign Up", "Create account with face photo + emergency contact"),
+        ("🔐", "Verify", "Live selfie verification before each ride"),
+        ("🚗", "Request Ride", "SAPS automatically notified of your trip"),
+        ("👮", "SAPS Monitors", "Real-time route tracking by authorities"),
+        ("🆘", "SOS", "One-tap emergency alert to SAPS")
     ]
     
-    cols = st.columns(4)
+    cols = st.columns(5)
     for i, (icon, title, desc) in enumerate(steps):
         with cols[i]:
             st.markdown(f"""
@@ -405,15 +514,6 @@ if menu == "🏠 Home":
                 <small>{desc}</small>
             </div>
             """, unsafe_allow_html=True)
-    
-    st.markdown("---")
-    st.markdown("### 🛡️ Why SafeRide?")
-    st.markdown("""
-    - **Biometric Security**: Face recognition ensures you are who you say you are
-    - **Real-time Tracking**: Share your live location with emergency contacts
-    - **Instant SOS**: One tap alerts SAPS and your emergency contacts
-    - **POPIA Compliant**: Your data is encrypted and protected
-    """)
 
 # Sign Up Page
 elif menu == "📝 Sign Up":
@@ -428,6 +528,7 @@ elif menu == "📝 Sign Up":
         with col2:
             emergency_name = st.text_input("Emergency Contact Name")
             emergency_phone = st.text_input("Emergency Contact Phone")
+            id_number = st.text_input("SA ID Number (for SAPS records)", placeholder="9001015009087")
         
         st.markdown("**📸 Take a selfie for biometric verification**")
         face_photo = st.camera_input("Look straight at camera, good lighting")
@@ -442,13 +543,13 @@ elif menu == "📝 Sign Up":
             else:
                 user_id = hashlib.md5(f"{name}{phone}{time.time()}".encode()).hexdigest()[:8]
                 
-                # Save user to database
                 users = load_users()
                 users[user_id] = {
                     "user_id": user_id,
                     "name": name,
                     "phone": phone,
                     "email": email,
+                    "id_number": id_number,
                     "emergency_name": emergency_name,
                     "emergency_phone": emergency_phone,
                     "registered_date": str(datetime.datetime.now()),
@@ -459,6 +560,12 @@ elif menu == "📝 Sign Up":
                 
                 st.success(f"✅ Account created successfully!")
                 st.info(f"Your User ID: `{user_id}`")
+                st.markdown("""
+                <div class="success-box">
+                    <b>✅ SAPS Registration Complete:</b><br>
+                    Your emergency contact and ID have been registered with the SAPS monitoring system.
+                </div>
+                """, unsafe_allow_html=True)
                 st.warning("⚠️ Save this User ID - you'll need it to sign in!")
                 st.balloons()
 
@@ -481,7 +588,6 @@ elif menu == "🔐 Sign In":
             if user_id not in users:
                 st.error("User ID not found. Please sign up first.")
             else:
-                # Simulate face verification
                 with st.spinner("Verifying identity..."):
                     time.sleep(2)
                     confidence = random.randint(85, 99)
@@ -494,12 +600,11 @@ elif menu == "🔐 Sign In":
                     st.session_state.user_name = users[user_id]['name']
                     st.balloons()
                     
-                    # Show emergency contact info
                     if users[user_id].get('emergency_name'):
                         st.info(f"📞 Emergency contact: {users[user_id]['emergency_name']} ({users[user_id].get('emergency_phone', 'N/A')})")
+                        st.info("👮 Your emergency contact is registered with SAPS for ride monitoring")
                 else:
                     st.error(f"❌ Verification failed. Confidence: {confidence}%")
-                    st.warning("Please ensure good lighting and try again")
 
 # Request Ride Page
 elif menu == "🚗 Request Ride":
@@ -510,7 +615,16 @@ elif menu == "🚗 Request Ride":
         st.info("Go to **Sign In** page to verify your identity")
         st.stop()
     
+    users = load_users()
+    user = users.get(st.session_state.user_id, {})
+    
     st.success(f"✅ Signed in as: {st.session_state.user_name}")
+    
+    st.markdown("""
+    <div class="saps-badge">
+        👮 This ride will be monitored by SAPS in real-time
+    </div>
+    """, unsafe_allow_html=True)
     
     col1, col2 = st.columns(2)
     with col1:
@@ -547,8 +661,6 @@ elif menu == "🚗 Request Ride":
         </div>
         """, unsafe_allow_html=True)
         
-        # Show route on map
-        st.markdown("### 🗺️ Route Map")
         route_df = pd.DataFrame({
             'lat': [pickup_coords['lat'], dest_coords['lat']],
             'lon': [pickup_coords['lon'], dest_coords['lon']]
@@ -556,51 +668,107 @@ elif menu == "🚗 Request Ride":
         st.map(route_df)
         
         if st.button("✅ Confirm Ride", type="primary"):
+            # Assign a random driver
+            driver_id = random.choice(list(DRIVERS.keys()))
+            driver = DRIVERS[driver_id]
+            
             ride_id = f"RIDE-{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
             
-            # Save ride to database
-            rides = load_rides()
-            rides[ride_id] = {
+            ride_info = {
                 "ride_id": ride_id,
                 "user_id": st.session_state.user_id,
                 "user_name": st.session_state.user_name,
                 "pickup": pickup,
+                "pickup_coords": pickup_coords,
                 "destination": destination,
+                "destination_coords": dest_coords,
                 "distance": distance,
                 "price": price,
                 "ride_type": ride_type,
                 "start_time": str(datetime.datetime.now()),
                 "status": "active"
             }
+            
+            # Send to SAPS for real-time monitoring
+            with st.spinner("Notifying SAPS and starting real-time monitoring..."):
+                rider_info = {
+                    "user_id": st.session_state.user_id,
+                    "name": user.get('name'),
+                    "phone": user.get('phone'),
+                    "emergency_phone": user.get('emergency_phone')
+                }
+                driver_info = {
+                    "driver_id": driver_id,
+                    "name": driver['name'],
+                    "vehicle": driver['vehicle'],
+                    "plate": driver['plate'],
+                    "phone": driver['phone']
+                }
+                
+                monitoring_id = send_to_saps(rider_info, driver_info, ride_info)
+                st.session_state.saps_monitoring_id = monitoring_id
+                time.sleep(1)
+            
+            # Save ride to database
+            rides = load_rides()
+            rides[ride_id] = ride_info
             save_rides(rides)
             
             # Update user stats
-            users = load_users()
-            if st.session_state.user_id in users:
-                users[st.session_state.user_id]["total_rides"] += 1
-                users[st.session_state.user_id]["total_spent"] += price
-                save_users(users)
+            users[st.session_state.user_id]["total_rides"] += 1
+            users[st.session_state.user_id]["total_spent"] += price
+            save_users(users)
             
-            st.session_state.current_ride = rides[ride_id]
+            st.session_state.current_ride = ride_info
             
-            st.success(f"✅ Ride Confirmed!")
-            st.info(f"Ride ID: {ride_id}")
+            st.markdown(f"""
+            <div class="monitoring-active">
+                👮 SAPS MONITORING ACTIVE<br>
+                Monitoring ID: {monitoring_id}<br>
+                SAPS is tracking your route in real-time
+            </div>
+            """, unsafe_allow_html=True)
             
-            # Driver assignment
-            with st.spinner("Finding nearby driver..."):
-                time.sleep(2)
+            st.success(f"✅ Ride Confirmed! Ride ID: {ride_id}")
             
             st.markdown(f"""
             <div class="driver-card">
                 <div style="font-size:48px">👨‍✈️</div>
-                <b>Driver: Thabo Molefe</b><br>
-                Vehicle: Toyota Corolla (ABC-123-GP)<br>
-                Rating: <span class="rating">★★★★★</span> 4.9<br>
+                <b>Driver: {driver['name']}</b><br>
+                Vehicle: {driver['vehicle']} ({driver['plate']})<br>
+                Driver Phone: {driver['phone']}<br>
+                Rating: <span class="rating">★★★★★</span> {driver['rating']}<br>
                 ETA: {max(3, int(distance/30*60))} minutes
             </div>
             """, unsafe_allow_html=True)
             
-            st.info("📱 Your emergency contact has been notified of your trip")
+            st.markdown(f"""
+            <div class="info-box">
+                <b>📋 SAPS Monitoring Details:</b><br>
+                • Your ride is being tracked by SAPS command center<br>
+                • Emergency contact ({user.get('emergency_name', 'Not set')}) will be alerted if route deviates<br>
+                • SOS button immediately notifies SAPS with your exact location<br>
+                • Monitoring ID: {monitoring_id} (save for reference)
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Simulate real-time location updates (in production, this would use actual GPS)
+            st.markdown("### 📍 Live SAPS Tracking Simulation")
+            progress_bar = st.progress(0)
+            location_status = st.empty()
+            
+            for i in range(101):
+                time.sleep(0.05)
+                progress_bar.progress(i)
+                if i % 20 == 0:
+                    # Simulate location update to SAPS
+                    current_lat = pickup_coords['lat'] + (dest_coords['lat'] - pickup_coords['lat']) * (i/100)
+                    current_lon = pickup_coords['lon'] + (dest_coords['lon'] - pickup_coords['lon']) * (i/100)
+                    update_saps_location(monitoring_id, {"lat": current_lat, "lon": current_lon})
+                    location_status.info(f"📍 SAPS tracking: {i}% of route completed | Position: {current_lat:.4f}, {current_lon:.4f}")
+            
+            st.success("✅ Ride completed! SAPS monitoring ended.")
+            st.balloons()
 
 # Emergency SOS Page
 elif menu == "🆘 Emergency SOS":
@@ -618,34 +786,50 @@ elif menu == "🆘 Emergency SOS":
     
     users = load_users()
     user = users.get(st.session_state.user_id, {})
+    current_ride = st.session_state.current_ride
     
     st.markdown(f"""
     <div class="info-box">
-        <b>📋 Your Information</b><br>
+        <b>📋 Your Information (Will be sent to SAPS)</b><br>
         Name: {user.get('name', 'N/A')}<br>
         Phone: {user.get('phone', 'N/A')}<br>
-        Emergency Contact: {user.get('emergency_name', 'Not set')}<br>
-        Emergency Phone: {user.get('emergency_phone', 'N/A')}
+        ID Number: {user.get('id_number', 'N/A')}<br>
+        Emergency Contact: {user.get('emergency_name', 'Not set')} ({user.get('emergency_phone', 'N/A')})
     </div>
     """, unsafe_allow_html=True)
     
-    current_location = st.selectbox("📍 Your current location", list(SA_LOCATIONS.keys()))
+    if current_ride:
+        st.markdown(f"""
+        <div class="info-box">
+            <b>🚗 Current Ride Information</b><br>
+            Pickup: {current_ride.get('pickup', 'N/A')}<br>
+            Destination: {current_ride.get('destination', 'N/A')}<br>
+            SAPS Monitoring ID: {st.session_state.saps_monitoring_id or 'Active'}
+        </div>
+        """, unsafe_allow_html=True)
+    
+    current_location = st.selectbox("📍 Your current location (GPS)", list(SA_LOCATIONS.keys()))
     
     st.markdown("---")
-    st.markdown("### ⚠️ WARNING: Only use in genuine emergencies")
+    st.markdown("### ⚠️ WARNING: This will immediately notify SAPS and your emergency contact")
     
     if st.button("🚨 TRIGGER SOS EMERGENCY 🚨", use_container_width=True):
         st.session_state.sos_triggered = True
         
-        # Log SOS
+        # Log SOS event with SAPS notification
         sos_entry = {
             "user_id": st.session_state.user_id,
             "user_name": user.get('name'),
             "user_phone": user.get('phone'),
+            "user_id_number": user.get('id_number'),
             "emergency_contact": user.get('emergency_phone'),
+            "emergency_name": user.get('emergency_name'),
             "location": current_location,
+            "location_coords": SA_LOCATIONS.get(current_location, {"lat": -26.2041, "lon": 28.0473}),
+            "saps_monitoring_id": st.session_state.saps_monitoring_id,
+            "ride_id": current_ride.get('ride_id') if current_ride else None,
             "timestamp": str(datetime.datetime.now()),
-            "status": "ACTIVE"
+            "status": "SAPS_NOTIFIED"
         }
         
         sos_logs = []
@@ -659,29 +843,30 @@ elif menu == "🆘 Emergency SOS":
         st.markdown("""
         <div class="error-box">
             <h2>🚨 SOS TRIGGERED! 🚨</h2>
-            <p>Emergency services have been notified</p>
+            <p>SAPS has been notified of your emergency</p>
             <p>Your emergency contact is being alerted</p>
-            <p>Your GPS location is being tracked</p>
+            <p>Your GPS location is being shared with responders</p>
         </div>
         """, unsafe_allow_html=True)
         
         st.markdown("""
         <div class="success-box">
             <b>✅ What happens now:</b><br>
-            • SAPS have been notified of your emergency<br>
-            • Your emergency contact has been alerted<br>
-            • Your GPS location is being shared with responders<br>
-            • A responder is being dispatched to your location<br>
-            • ETA: 5-10 minutes
+            • SAPS command center has been alerted with your details<br>
+            • Your emergency contact has been notified<br>
+            • Your GPS location is being shared with SAPS responders<br>
+            • All ride evidence has been unlocked for SAPS investigation<br>
+            • A police responder is being dispatched to your location
         </div>
         """, unsafe_allow_html=True)
         
+        st.markdown("### ⏰ SAPS Responder ETA: 5-10 minutes")
         progress_bar = st.progress(0)
         for i in range(100):
             time.sleep(0.02)
             progress_bar.progress(i + 1)
         
-        st.success("✅ Responder has been dispatched! Help is on the way.")
+        st.success("✅ SAPS responder has been dispatched! Help is on the way.")
         
         if st.button("Reset (After Emergency Resolved)"):
             st.session_state.sos_triggered = False
@@ -723,11 +908,10 @@ elif menu == "📊 My Dashboard":
         </div>
         """, unsafe_allow_html=True)
     with col4:
-        days = (datetime.datetime.now() - datetime.datetime.strptime(user.get('registered_date', str(datetime.datetime.now())), '%Y-%m-%d %H:%M:%S.%f')).days if user.get('registered_date') else 0
         st.markdown(f"""
         <div class="stat-card">
-            <div class="stat-number">{days}</div>
-            <div class="stat-label">Days Active</div>
+            <div class="stat-number">👮</div>
+            <div class="stat-label">SAPS Monitored</div>
         </div>
         """, unsafe_allow_html=True)
     
@@ -736,18 +920,20 @@ elif menu == "📊 My Dashboard":
     - **Name:** {user.get('name', 'N/A')}
     - **Phone:** {user.get('phone', 'N/A')}
     - **Email:** {user.get('email', 'N/A')}
+    - **ID Number:** {user.get('id_number', 'N/A')}
     - **Emergency Contact:** {user.get('emergency_name', 'N/A')} ({user.get('emergency_phone', 'N/A')})
     - **Member Since:** {user.get('registered_date', 'N/A')[:10]}
     """)
     
     if user_rides:
-        st.markdown("### 🚗 Recent Rides")
+        st.markdown("### 🚗 Recent Rides (All Monitored by SAPS)")
         for ride_id, ride in list(user_rides.items())[-5:]:
             st.markdown(f"""
             <div class="ride-card">
                 <b>{ride_id}</b><br>
                 {ride.get('pickup', 'N/A')} → {ride.get('destination', 'N/A')}<br>
-                {ride.get('ride_type', 'Standard')} | R{ride.get('price', 0)} | {ride.get('start_time', 'N/A')[:16]}
+                {ride.get('ride_type', 'Standard')} | R{ride.get('price', 0)} | {ride.get('start_time', 'N/A')[:16]}<br>
+                <span class="saps-badge" style="font-size:10px">👮 SAPS Monitored</span>
             </div>
             """, unsafe_allow_html=True)
 
@@ -755,8 +941,8 @@ elif menu == "📊 My Dashboard":
 st.markdown("---")
 st.markdown("""
 <div style="text-align: center; color: #6c757d; font-size: 12px;">
-    <p>SafeRide - AI-Powered Biometric Ride Safety System</p>
-    <p>SOS Available 24/7 | POPIA Compliant | Made in South Africa 🇿🇦</p>
+    <p>SafeRide - AI-Powered Biometric Ride Safety System with SAPS Real-time Monitoring</p>
+    <p>👮 All rides are monitored by SAPS | SOS Available 24/7 | POPIA Compliant 🇿🇦</p>
     <p>Live Demo: <a href="https://sandile19991111-saferide.streamlit.app" target="_blank">sandile19991111-saferide.streamlit.app</a></p>
     <p>GitHub: <a href="https://github.com/SANDILE19991111/saferide" target="_blank">github.com/SANDILE19991111/saferide</a></p>
 </div>
