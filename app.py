@@ -7,6 +7,15 @@ import streamlit as st
 import json, os, time, datetime, random, string
 from pathlib import Path
 
+
+# Initialize session state
+if 'verified' not in st.session_state:
+    st.session_state.verified = False
+if 'rider_id' not in st.session_state:
+    st.session_state.rider_id = None
+if 'rider_name' not in st.session_state:
+    st.session_state.rider_name = None
+
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -409,6 +418,7 @@ page = st.selectbox("Navigate", [
     "🏠  Home",
     "👤  Register Rider",
     "🔐  Verify for Ride",
+    "🚗  Request Ride",
     "🚘  Safety Settings",
     "🚗  Driver Dashboard",
     "📡  Surveillance Server",
@@ -576,6 +586,11 @@ elif page == "🔐  Verify for Ride":
 
             if report.get("verified"):
                 st.balloons()
+                
+                # Set session state for ride request
+                st.session_state.verified = True
+                st.session_state.rider_id = rider_id
+                st.session_state.rider_name = report.get("rider_name", "Rider")
 
                 # Generate pickup PIN
                 pin = generate_pin()
@@ -632,7 +647,54 @@ elif page == "🔐  Verify for Ride":
                 st.error("Ride blocked. Contact SafeRide support.")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SAFETY SETTINGS  (new page)
+# REQUEST RIDE
+# ══════════════════════════════════════════════════════════════════════════════
+elif page == "🚗  Request Ride":
+    st.markdown("### 🚗 Request a Ride")
+    
+    if not st.session_state.verified:
+        st.warning("⚠️ Please verify your identity first.")
+        st.info("Go to **Verify for Ride** and complete verification before requesting a ride.")
+        st.stop()
+    
+    st.success(f"✅ Verified as: {st.session_state.get('rider_name', 'Rider')}")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        pickup = st.text_input("📍 Pickup location", placeholder="Enter your current address")
+    with col2:
+        destination = st.text_input("🎯 Destination", placeholder="Where are you going?")
+    
+    ride_type = st.radio(
+        "Ride type",
+        ["🚗 Standard", "👩 Women for Women", "⭐ Premium"],
+        horizontal=True
+    )
+    
+    if st.button("🚀 Request Ride Now", type="primary"):
+        if pickup and destination:
+            ride_id = f"RIDE-{random.randint(10000, 99999)}"
+            st.balloons()
+            st.success(f"✅ Ride requested successfully!")
+            st.markdown(f"""
+            <div class='sr-card'>
+                <b>Ride ID:</b> {ride_id}<br>
+                <b>Driver:</b> Thabo Molefe<br>
+                <b>Vehicle:</b> Toyota Corolla (ABC-123-GP)<br>
+                <b>ETA:</b> 5-7 minutes<br>
+                <b>Estimated fare:</b> R65 - R85<br>
+                <b>Status:</b> Driver assigned ✅
+            </div>
+            """, unsafe_allow_html=True)
+            
+            st.markdown("### 📍 Live Tracking")
+            st.map({"lat": [-26.2041], "lon": [28.0473]})
+            st.info("📱 Your trip is being shared with your emergency contact")
+        else:
+            st.error("Please enter both pickup location and destination")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SAFETY SETTINGS
 # ══════════════════════════════════════════════════════════════════════════════
 elif page == "🚘  Safety Settings":
     st.markdown("### 🚘 Safety Settings")
@@ -696,7 +758,10 @@ elif page == "🚘  Safety Settings":
     st.markdown('</div>', unsafe_allow_html=True)
 
     # ── 4. Route Anomaly Alerts ──────────────────────────────────────────────
-    st.markdown('<div class="sr-section">🗺️ Route Anomaly Alerts</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sr-section">🗺️ Route Anomaly Alerts</div>
+                # ══════════════════════════════════════════════════════════════════════════════
+# SAFETY SETTINGS (continued)
+# ══════════════════════════════════════════════════════════════════════════════
     st.markdown('<div class="sr-card">', unsafe_allow_html=True)
     route_alerts = st.toggle("Alert my contact on unexpected stops or detours",
                              value=prefs.get("route_alerts", True),
