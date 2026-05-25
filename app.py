@@ -1,7 +1,6 @@
 ﻿import streamlit as st
 import cv2
 import numpy as np
-import face_recognition
 import json
 import os
 import datetime
@@ -12,7 +11,20 @@ import random
 from pathlib import Path
 from PIL import Image
 import pandas as pd
-import requests
+
+# Optional imports with error handling
+try:
+    import face_recognition
+    FACE_RECOGNITION_AVAILABLE = True
+except ImportError:
+    FACE_RECOGNITION_AVAILABLE = False
+    st.warning("Face recognition module not available. Install with: pip install face-recognition")
+
+try:
+    import requests
+    REQUESTS_AVAILABLE = True
+except ImportError:
+    REQUESTS_AVAILABLE = False
 
 # Session state initialization
 if 'authenticated' not in st.session_state:
@@ -32,7 +44,7 @@ st.set_page_config(
     layout="centered"
 )
 
-# Custom CSS with SOS styling
+# Custom CSS
 st.markdown("""
 <style>
     .stButton > button {
@@ -93,16 +105,13 @@ st.markdown("""
         text-align: center;
         margin: 10px 0;
     }
-    .warning-box {
-        background: #fff3cd;
-        color: #856404;
-        padding: 15px;
-        border-radius: 10px;
-        border-left: 4px solid #ffc107;
-        margin: 10px 0;
-    }
 </style>
 """, unsafe_allow_html=True)
+
+# Check face recognition availability at startup
+if not FACE_RECOGNITION_AVAILABLE:
+    st.warning("⚠️ Face recognition not available. Please run: pip install face-recognition")
+    st.stop()
 
 st.title("🛡️ SafeRide")
 st.markdown("*Biometric Authentication • Safe Travel for Everyone*")
@@ -111,7 +120,6 @@ DATA_DIR = Path("biometric_data")
 DATA_DIR.mkdir(exist_ok=True)
 USERS_FILE = DATA_DIR / "users.json"
 RIDES_FILE = DATA_DIR / "rides.json"
-SOS_LOG_FILE = DATA_DIR / "sos_log.json"
 
 def load_users():
     if USERS_FILE.exists():
@@ -132,15 +140,6 @@ def load_rides():
 def save_rides(rides):
     with open(RIDES_FILE, 'w') as f:
         json.dump(rides, f, indent=2)
-
-def log_sos(sos_data):
-    sos_logs = []
-    if SOS_LOG_FILE.exists():
-        with open(SOS_LOG_FILE, 'r') as f:
-            sos_logs = json.load(f)
-    sos_logs.append(sos_data)
-    with open(SOS_LOG_FILE, 'w') as f:
-        json.dump(sos_logs, f, indent=2)
 
 # Predefined locations
 PREDEFINED_LOCATIONS = {
@@ -205,6 +204,9 @@ menu = st.sidebar.selectbox("Navigation", [
     "🆘 Emergency SOS",
     "📊 My Dashboard"
 ])
+
+# Rest of your app pages here (same as before)
+# ... (keep all your existing page code)
 
 # Home Page
 if menu == "🏠 Home":
@@ -307,7 +309,7 @@ elif menu == "🔐 Verify Identity":
                     else:
                         st.error(f"❌ {message}")
 
-# Request Ride Page
+# Request Ride Page  
 elif menu == "🚗 Request Ride":
     st.markdown("### 🚗 Request a Ride")
     
@@ -388,7 +390,7 @@ elif menu == "🆘 Emergency SOS":
     current_ride = st.session_state.current_ride
     
     st.markdown(f"""
-    <div class="warning-box">
+    <div class="info-box">
         <b>Your Information:</b><br>
         Name: {user.get('name', 'N/A')}<br>
         Phone: {user.get('phone', 'N/A')}<br>
@@ -399,7 +401,6 @@ elif menu == "🆘 Emergency SOS":
     if current_ride:
         st.info(f"Current Ride: {current_ride.get('pickup')} → {current_ride.get('destination')}")
     
-    # Get current GPS (simulated)
     current_location = st.selectbox("Your current location (GPS)", list(PREDEFINED_LOCATIONS.keys()))
     
     st.markdown("---")
@@ -407,20 +408,6 @@ elif menu == "🆘 Emergency SOS":
     
     if st.button("🚨 TRIGGER SOS EMERGENCY 🚨", use_container_width=True):
         st.session_state.sos_triggered = True
-        
-        # Log SOS event
-        sos_data = {
-            "user_id": st.session_state.user_id,
-            "user_name": user.get('name'),
-            "user_phone": user.get('phone'),
-            "emergency_contact": user.get('emergency_contact'),
-            "emergency_name": user.get('emergency_name'),
-            "location": current_location,
-            "ride_id": current_ride.get('ride_id') if current_ride else None,
-            "timestamp": str(datetime.datetime.now()),
-            "status": "ACTIVE"
-        }
-        log_sos(sos_data)
         
         st.markdown("""
         <div class="sos-box">
@@ -431,7 +418,6 @@ elif menu == "🆘 Emergency SOS":
         </div>
         """, unsafe_allow_html=True)
         
-        # Show emergency instructions
         st.markdown("""
         <div class="success-box">
             <b>✅ What happens now:</b><br>
@@ -443,7 +429,6 @@ elif menu == "🆘 Emergency SOS":
         </div>
         """, unsafe_allow_html=True)
         
-        # Countdown timer
         st.markdown("### ⏰ Responder ETA: 5-10 minutes")
         progress_bar = st.progress(0)
         for i in range(100):
@@ -452,7 +437,6 @@ elif menu == "🆘 Emergency SOS":
         
         st.success("✅ Responder has been dispatched! Help is on the way.")
         
-        # Reset after SOS
         if st.button("Reset (After Emergency Resolved)"):
             st.session_state.sos_triggered = False
             st.rerun()

@@ -1,0 +1,10 @@
+﻿{
+    "include": ["."],
+    "exclude": ["venv", "biometric_data", "__pycache__"],
+    "pythonVersion": "3.10",
+    "pythonPlatform": "Windows",
+    "typeCheckingMode": "basic",
+    "reportMissingImports": "warning",
+    "reportMissingTypeStubs": "none",
+    "extraPaths": ["./venv/Lib/site-packages"]
+}
