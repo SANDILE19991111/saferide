@@ -80,4 +80,4 @@ Streamlit, DeepFace, Gemini 2.5 Flash, Python
 
 ---
 
-That's it. Short, real, no corporate fluff.
+
